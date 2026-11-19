@@ -527,6 +527,16 @@ function lesson(item, index) {
     var paragraphs = item.h.split(/\n{2,}/).map(function (text) {
         return '<p>' + appEscape(text).replace(/\n/g, "<br>") + '</p>';
     }).join("");
+    var studyCards = Array.isArray(item.studyCards) ? item.studyCards : [];
+    var studyCardsHtml = studyCards.length ? '<section class="study-cards-section" aria-label="Cards explicativos para estudar"><h2>Estude antes de praticar</h2><div class="study-cards-grid">' +
+        studyCards.map(function (card, cardIndex) {
+            return '<article class="study-card"><span class="lv">CARD ' + (cardIndex + 1) + '</span>' +
+                '<h3>' + appEscape(card.title || "Conceito importante") + '</h3>' +
+                (card.concept ? '<p class="study-card-concept">' + appEscape(card.concept) + '</p>' : '') +
+                (card.explanation ? '<p>' + appEscape(card.explanation).replace(/\\n/g, "<br>") + '</p>' : '') +
+                (card.example ? '<span class="study-card-example-label">Exemplo</span><pre>' + appEscape(card.example) + '</pre>' : '') +
+                '</article>';
+        }).join("") + '</div></section>' : "";
     var questions = item.q.map(function (question, qIndex) {
         if (question.mode === "code") {
             var draftKey = item.id + ":" + qIndex;
@@ -566,7 +576,7 @@ function lesson(item, index) {
         });
     });
     return '<span class="lv">' + appEscape(item.d) + '</span><h1>' + appEscape(item.t) + '</h1>' +
-        '<div class="cell">' + paragraphs + '</div><h2>' + appEscape(SITE_SETTINGS.practiceTitle) + '</h2>' + (questions || '<p>Esta aula ainda não tem exercícios.</p>') +
+        '<div class="cell">' + paragraphs + '</div>' + studyCardsHtml + '<h2>' + appEscape(SITE_SETTINGS.practiceTitle) + '</h2>' + (questions || '<p>Esta aula ainda não tem exercícios.</p>') +
         '<section class="cell ai-complete-prompt" data-ai-complete' + (hasCompletedAll ? "" : " hidden") + '><h2>🎉 Você concluiu todas as questões!</h2><p>Parabéns! Continue praticando: peça à IA novas questões sobre os temas da apostila ou tire uma dúvida de estudo.</p><div class="home-actions"><button type="button" class="cf btn-ai" data-open-ai="generator">Criar questões com IA</button><button type="button" class="cf btn-secundario" data-open-ai="tutor">Tirar dúvidas com a IA</button></div></section>' +
         '<div class="home-actions"><a class="btn-header" href="#ia-study">Como usar a IA com segurança</a></div>' +
         '<nav class="pn" aria-label="Navegação entre aulas">' + previous + next + '</nav>';

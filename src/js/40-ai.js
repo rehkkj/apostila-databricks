@@ -1314,7 +1314,7 @@ async function genBatch(cfg, n, evitar) {
 async function genStudyCards(cfg) {
     var prompt = "Crie 4 cards didáticos curtos, em português do Brasil, para preparar o estudante antes de responder questões sobre: " + cfg.tema + ". Contexto obrigatório: Databricks. Dificuldade: " + cfg.dif + ". Cada card deve ensinar algo útil, não fazer uma pergunta. Inclua conceito, explicação clara e exemplo concreto (SQL, Python ou PySpark quando adequado). Não inclua questões, alternativas ou gabaritos. Retorne somente JSON válido no formato {\"cards\":[{\"title\":\"...\",\"concept\":\"...\",\"explanation\":\"...\",\"example\":\"...\"}]} .";
     var text = await requestStudyAi({
-        provider: GEN_CFG.provider, key: GEN_CFG.apiKey, model: GEN_CFG.model,
+        provider: cfg.provider || GEN_CFG.provider, key: cfg.key || GEN_CFG.apiKey, model: cfg.model || GEN_CFG.model,
         max_tokens: 1100, responseMimeType: "application/json", temperature: 0.35,
         system: "Você é um professor de Databricks. Produza material de estudo correto, didático e conciso. Responda somente JSON válido.",
         messages: [{ role: "user", content: prompt }]

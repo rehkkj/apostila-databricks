@@ -43,6 +43,8 @@ document.addEventListener("toggle", function (event) {
     var target = event.target;
     if (target && target.classList && target.classList.contains("font-picker") && target.open) loadAllWebFonts();
 }, true);
+
+;
 /* ---------- Modo leve automático ----------
    Para as animações contínuas do fundo em aparelhos fracos / economia de dados / movimento reduzido.
    Forçar manualmente (no console do navegador):
@@ -68,6 +70,8 @@ document.addEventListener("toggle", function (event) {
         root.classList.toggle("tab-hidden", document.hidden);
     });
 })();
+
+;
 /* ---------- Aplicação principal ---------- */
 var CONTENT_KEY = "apostilaDatabricksContent";
 var PROGRESS_KEY = "apostilaDatabricksProgress";
@@ -109,8 +113,8 @@ var DEFAULT_SITE_SETTINGS = {
     mouseAccent: "#6f8cff",
     mouseEffectColor: "#ff835f",
     mouseEffectAccent: "#6f8cff",
-    hideNativeCursor: true,
-    cursorDefaultsVersion: 2,
+    hideNativeCursor: false,
+    cursorDefaultsVersion: 3,
     animateCursor: true,
     backgroundEffect: "aurora",
     backgroundIntensity: 58,
@@ -205,6 +209,8 @@ var AVAILABLE_FONTS = [
     "Inter", "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Nunito", "Raleway", "Merriweather",
     "Playfair Display", "Lora", "Source Sans 3", "JetBrains Mono", "DM Sans", "Space Grotesk", "Manrope", "Georgia", "system-ui"
 ];
+
+;
 var DEFAULT_MODS = [
     { t: "Fundamentos do Databricks", l: [
         { id: "lakehouse", t: "O que é o Lakehouse", d: "8 min", h: "O Lakehouse combina a flexibilidade de um data lake com recursos de gestão, confiabilidade e desempenho associados a um data warehouse.\n\nNo Databricks, os dados podem ser armazenados em tabelas Delta sobre armazenamento em nuvem. Compute, armazenamento e governança são componentes distintos.", q: [
@@ -241,6 +247,8 @@ var DEFAULT_MODS = [
         ] }
     ] }
 ];
+
+;
 function validHexColor(color) {
     return typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color);
 }
@@ -770,6 +778,16 @@ function lesson(item, index) {
     var paragraphs = item.h.split(/\n{2,}/).map(function (text) {
         return '<p>' + appEscape(text).replace(/\n/g, "<br>") + '</p>';
     }).join("");
+    var studyCards = Array.isArray(item.studyCards) ? item.studyCards : [];
+    var studyCardsHtml = studyCards.length ? '<section class="study-cards-section" aria-label="Cards explicativos para estudar"><h2>Estude antes de praticar</h2><div class="study-cards-grid">' +
+        studyCards.map(function (card, cardIndex) {
+            return '<article class="study-card"><span class="lv">CARD ' + (cardIndex + 1) + '</span>' +
+                '<h3>' + appEscape(card.title || "Conceito importante") + '</h3>' +
+                (card.concept ? '<p class="study-card-concept">' + appEscape(card.concept) + '</p>' : '') +
+                (card.explanation ? '<p>' + appEscape(card.explanation).replace(/\\n/g, "<br>") + '</p>' : '') +
+                (card.example ? '<span class="study-card-example-label">Exemplo</span><pre>' + appEscape(card.example) + '</pre>' : '') +
+                '</article>';
+        }).join("") + '</div></section>' : "";
     var questions = item.q.map(function (question, qIndex) {
         if (question.mode === "code") {
             var draftKey = item.id + ":" + qIndex;
@@ -809,7 +827,7 @@ function lesson(item, index) {
         });
     });
     return '<span class="lv">' + appEscape(item.d) + '</span><h1>' + appEscape(item.t) + '</h1>' +
-        '<div class="cell">' + paragraphs + '</div><h2>' + appEscape(SITE_SETTINGS.practiceTitle) + '</h2>' + (questions || '<p>Esta aula ainda não tem exercícios.</p>') +
+        '<div class="cell">' + paragraphs + '</div>' + studyCardsHtml + '<h2>' + appEscape(SITE_SETTINGS.practiceTitle) + '</h2>' + (questions || '<p>Esta aula ainda não tem exercícios.</p>') +
         '<section class="cell ai-complete-prompt" data-ai-complete' + (hasCompletedAll ? "" : " hidden") + '><h2>🎉 Você concluiu todas as questões!</h2><p>Parabéns! Continue praticando: peça à IA novas questões sobre os temas da apostila ou tire uma dúvida de estudo.</p><div class="home-actions"><button type="button" class="cf btn-ai" data-open-ai="generator">Criar questões com IA</button><button type="button" class="cf btn-secundario" data-open-ai="tutor">Tirar dúvidas com a IA</button></div></section>' +
         '<div class="home-actions"><a class="btn-header" href="#ia-study">Como usar a IA com segurança</a></div>' +
         '<nav class="pn" aria-label="Navegação entre aulas">' + previous + next + '</nav>';
@@ -4065,6 +4083,8 @@ window.addEventListener("hashchange", renderApp);
 })();
 
 /* ---------- Configuração salva no navegador ---------- */
+
+;
 var GEN_KEY = "apostilaGenCfg";
 var AI_USAGE_KEY = "apostilaAiUsage";
 var AI_WIDGET_POSITION_KEY = "apostilaAiWidgetPosition";
@@ -5381,7 +5401,7 @@ async function genBatch(cfg, n, evitar) {
 async function genStudyCards(cfg) {
     var prompt = "Crie 4 cards didáticos curtos, em português do Brasil, para preparar o estudante antes de responder questões sobre: " + cfg.tema + ". Contexto obrigatório: Databricks. Dificuldade: " + cfg.dif + ". Cada card deve ensinar algo útil, não fazer uma pergunta. Inclua conceito, explicação clara e exemplo concreto (SQL, Python ou PySpark quando adequado). Não inclua questões, alternativas ou gabaritos. Retorne somente JSON válido no formato {\"cards\":[{\"title\":\"...\",\"concept\":\"...\",\"explanation\":\"...\",\"example\":\"...\"}]} .";
     var text = await requestStudyAi({
-        provider: GEN_CFG.provider, key: GEN_CFG.apiKey, model: GEN_CFG.model,
+        provider: cfg.provider || GEN_CFG.provider, key: cfg.key || GEN_CFG.apiKey, model: cfg.model || GEN_CFG.model,
         max_tokens: 1100, responseMimeType: "application/json", temperature: 0.35,
         system: "Você é um professor de Databricks. Produza material de estudo correto, didático e conciso. Responda somente JSON válido.",
         messages: [{ role: "user", content: prompt }]
@@ -5474,6 +5494,8 @@ async function runGen() {
     closeGenModal();
     location.hash = "#" + id;
 }
+
+;
 /* ---------- Mostra nível/tipo de cada questão no cartão ---------- */
 var _lessonOriginal = lesson;
 lesson = function (x, i) {

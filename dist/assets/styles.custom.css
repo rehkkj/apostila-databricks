@@ -138,8 +138,19 @@ body.cursor-active .mouse-fx { opacity: 1; }
 body.no-mouse-effect .mouse-fx,
 body.no-mouse-effect #mouseFollower { display: none; }
 @media (pointer: fine) {
+    /* O cursor nativo permanece visível junto do cursor personalizado. */
     body.hide-native-cursor,
-    body.hide-native-cursor * { cursor: none !important; }
+    body.hide-native-cursor * { cursor: auto !important; }
+    body.hide-native-cursor a,
+    body.hide-native-cursor button,
+    body.hide-native-cursor [role="button"],
+    body.hide-native-cursor input[type="button"],
+    body.hide-native-cursor input[type="submit"],
+    body.hide-native-cursor select,
+    body.hide-native-cursor label { cursor: pointer !important; }
+    body.hide-native-cursor textarea,
+    body.hide-native-cursor input,
+    body.hide-native-cursor [contenteditable="true"] { cursor: text !important; }
 }
 .mouse-fx span,
 .mouse-preview-cursor span { position: absolute; display: block; border-radius: 50%; }
@@ -1025,3 +1036,14 @@ label.field-label { display: block; font-size: 13px; color: var(--muted); margin
 
 /* Cards didáticos gerados pela IA */
 .study-cards-section{margin:22px 0 30px}.study-cards-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;margin-top:14px}.study-card{min-width:0;padding:18px;border:1px solid var(--site-primary,#7c5cff);border-radius:16px;background:color-mix(in srgb,var(--site-primary,#7c5cff) 7%,var(--site-light-surface,#fff));box-shadow:0 8px 24px rgba(30,20,60,.06)}.study-card h3{margin:8px 0 12px}.study-card p{line-height:1.65}.study-card-example{margin-top:12px;padding:12px;border-radius:10px;background:rgba(100,100,120,.09);overflow-wrap:anywhere}.study-card-example pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.study-card-example code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+
+/* Cards de estudo gerados pela IA */
+.study-cards-section { margin: 24px 0 30px; }
+.study-cards-section > h2 { margin-bottom: 14px; }
+.study-cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; }
+.study-card { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); box-shadow: var(--shadow); }
+.study-card h3 { margin: 0 0 8px; color: var(--text); font-size: 17px; }
+.study-card .study-card-concept { margin: 0 0 8px; color: var(--primary); font-weight: 700; }
+.study-card p { margin: 8px 0; color: var(--text); line-height: 1.65; }
+.study-card pre { overflow-x: auto; padding: 12px; border-radius: 10px; background: var(--surface); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.study-card .study-card-example-label { display: block; margin-top: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }

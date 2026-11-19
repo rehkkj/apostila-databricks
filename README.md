@@ -4,7 +4,7 @@ Uma plataforma web interativa e responsiva focada no estudo de **Databricks**, a
 
 O projeto funciona como uma Single Page Application (SPA) estática, com armazenamento local no navegador (`localStorage`), editor visual completo e integração com Inteligência Artificial (**Datrics**) para tutoria e geração dinâmica de exercícios.
 
-🔗 **Acesse online:** [Databricks Academy](https://rehkkj.github.io/DataBricks-Academy/)
+🔗 **Acesse online:** [Databricks Academy](https://rehkkj.github.io/apostila-databricks/)
 
 ## ✨ Funcionalidades Principais
 
@@ -53,3 +53,5 @@ apostila-databricks/
 * **HTML5 & CSS3:** Variáveis CSS dinâmicas (`color-mix`, temas claro/escuro), Grid/Flexbox e animações puras em CSS.
 * **JavaScript (ES6+):** Arquitetura modular sem dependência de frameworks externos, manipulação de DOM, `localStorage` e integração via `Fetch API`.
 * **Google Gemini API:** Motor de inteligência artificial para tutoria e geração estruturada de exercícios em JSON.
+
+Atualização: os arquivos-fonte ficam em `src/`; a versão pronta para abrir está em `dist/`. Para recompilar após alterações, execute `npm install` e `npm run build`.
