@@ -1047,3 +1047,13 @@ label.field-label { display: block; font-size: 13px; color: var(--muted); margin
 .study-card p { margin: 8px 0; color: var(--text); line-height: 1.65; }
 .study-card pre { overflow-x: auto; padding: 12px; border-radius: 10px; background: var(--surface); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .study-card .study-card-example-label { display: block; margin-top: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+
+
+/* Backup criptografado de credenciais de IA */
+.ai-backup-panel { border: 1px solid var(--border); border-radius: 14px; padding: 16px; background: var(--surface); }
+.ai-backup-panel h3 { margin: 8px 0; color: var(--text); }
+.ai-backup-panel input[type="password"], .ai-backup-panel input[type="file"] { width: 100%; max-width: 100%; margin: 5px 0 12px; }
+.ai-backup-panel hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+.ai-backup-panel #gBackupStatus { overflow-wrap: anywhere; }
+.ai-backup-guide ol { padding-left: 22px; }
+.ai-backup-guide li { margin: 8px 0; line-height: 1.6; }
