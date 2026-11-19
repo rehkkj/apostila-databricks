@@ -47,13 +47,12 @@ function normalizedSiteSettings(value) {
             if (typeof value.effects[key] === "boolean") settings.effects[key] = value.effects[key];
         });
     }
-    // Migra configurações antigas: o cursor nativo fica visível por padrão.
-    // A opção só volta a ocultá-lo se o usuário ativá-la explicitamente nesta versão.
-    if (value.cursorDefaultsVersion !== 3) {
-        settings.hideNativeCursor = false;
+    if (value.cursorDefaultsVersion !== 2) {
+        settings.effects.mouse = true;
+        settings.hideNativeCursor = true;
         if (!value.mouseStyle || value.mouseStyle === "ring") settings.mouseStyle = "follower";
     }
-    settings.cursorDefaultsVersion = 3;
+    settings.cursorDefaultsVersion = 2;
     if (value.colors && typeof value.colors === "object") {
         ["primary", "primaryLight", "secondary", "success", "danger"].forEach(function (key) {
             if (validHexColor(value.colors[key])) settings.colors[key] = value.colors[key];
@@ -1071,14 +1070,6 @@ function tutorSystemPrompt() {
     var profile = {};
     try { profile = JSON.parse(localStorage.getItem("databricksAcademyUserProfile") || "{}"); } catch (error) {}
     var name = profile && typeof profile.name === "string" ? profile.name.trim().slice(0, 40) : "";
-
-    var nameRule = name
-        ? "REGRA OBRIGATÓRIA: o nome do estudante é exatamente " +
-          JSON.stringify(name) +
-          ". Nunca corrija, altere, normalize, abrevie ou tente adivinhar a grafia do nome. " +
-          "Nunca substitua por uma grafia parecida. Sempre escreva exatamente como está no perfil. "
-        : "";
-
     // Somente a aula aberta é enviada; nenhuma outra página é varrida.
     var material = contextLesson ? {
         pagina: contextLesson.t,

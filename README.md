@@ -4,7 +4,7 @@ Uma plataforma web interativa e responsiva focada no estudo de **Databricks**, a
 
 O projeto funciona como uma Single Page Application (SPA) estática, com armazenamento local no navegador (`localStorage`), editor visual completo e integração com Inteligência Artificial (**Datrics**) para tutoria e geração dinâmica de exercícios.
 
-🔗 **Acesse online:** [Databricks Academy](https://rehkkj.github.io/apostila-databricks/)
+🔗 **Acesse online:** [Databricks Academy](https://rehkkj.github.io/DataBricks-Academy/)
 
 ## ✨ Funcionalidades Principais
 

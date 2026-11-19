@@ -43,8 +43,6 @@ document.addEventListener("toggle", function (event) {
     var target = event.target;
     if (target && target.classList && target.classList.contains("font-picker") && target.open) loadAllWebFonts();
 }, true);
-
-;
 /* ---------- Modo leve automático ----------
    Para as animações contínuas do fundo em aparelhos fracos / economia de dados / movimento reduzido.
    Forçar manualmente (no console do navegador):
@@ -70,8 +68,6 @@ document.addEventListener("toggle", function (event) {
         root.classList.toggle("tab-hidden", document.hidden);
     });
 })();
-
-;
 /* ---------- Aplicação principal ---------- */
 var CONTENT_KEY = "apostilaDatabricksContent";
 var PROGRESS_KEY = "apostilaDatabricksProgress";
@@ -113,8 +109,8 @@ var DEFAULT_SITE_SETTINGS = {
     mouseAccent: "#6f8cff",
     mouseEffectColor: "#ff835f",
     mouseEffectAccent: "#6f8cff",
-    hideNativeCursor: false,
-    cursorDefaultsVersion: 3,
+    hideNativeCursor: true,
+    cursorDefaultsVersion: 2,
     animateCursor: true,
     backgroundEffect: "aurora",
     backgroundIntensity: 58,
@@ -209,8 +205,6 @@ var AVAILABLE_FONTS = [
     "Inter", "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Nunito", "Raleway", "Merriweather",
     "Playfair Display", "Lora", "Source Sans 3", "JetBrains Mono", "DM Sans", "Space Grotesk", "Manrope", "Georgia", "system-ui"
 ];
-
-;
 var DEFAULT_MODS = [
     { t: "Fundamentos do Databricks", l: [
         { id: "lakehouse", t: "O que é o Lakehouse", d: "8 min", h: "O Lakehouse combina a flexibilidade de um data lake com recursos de gestão, confiabilidade e desempenho associados a um data warehouse.\n\nNo Databricks, os dados podem ser armazenados em tabelas Delta sobre armazenamento em nuvem. Compute, armazenamento e governança são componentes distintos.", q: [
@@ -247,8 +241,6 @@ var DEFAULT_MODS = [
         ] }
     ] }
 ];
-
-;
 function validHexColor(color) {
     return typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color);
 }
@@ -298,12 +290,12 @@ function normalizedSiteSettings(value) {
             if (typeof value.effects[key] === "boolean") settings.effects[key] = value.effects[key];
         });
     }
-    // Migra configurações antigas: o cursor nativo fica visível por padrão.
-    if (value.cursorDefaultsVersion !== 3) {
-        settings.hideNativeCursor = false;
+    if (value.cursorDefaultsVersion !== 2) {
+        settings.effects.mouse = true;
+        settings.hideNativeCursor = true;
         if (!value.mouseStyle || value.mouseStyle === "ring") settings.mouseStyle = "follower";
     }
-    settings.cursorDefaultsVersion = 3;
+    settings.cursorDefaultsVersion = 2;
     if (value.colors && typeof value.colors === "object") {
         ["primary", "primaryLight", "secondary", "success", "danger"].forEach(function (key) {
             if (validHexColor(value.colors[key])) settings.colors[key] = value.colors[key];
@@ -4073,8 +4065,6 @@ window.addEventListener("hashchange", renderApp);
 })();
 
 /* ---------- Configuração salva no navegador ---------- */
-
-;
 var GEN_KEY = "apostilaGenCfg";
 var AI_USAGE_KEY = "apostilaAiUsage";
 var AI_WIDGET_POSITION_KEY = "apostilaAiWidgetPosition";
@@ -4798,6 +4788,7 @@ function openGen() {
             '<div><label class="field-label">Dificuldade</label>' + gSel("gDif", ["Fácil", "Médio", "Difícil", "Misto"], "Médio") + '</div>' +
             '<div><label class="field-label">Tipo de questão</label>' + gSel("gTipo", ["Conceitual", "Código (SQL/PySpark)", "Prática de código (IDE)", "Cenário prático", "Misto"], "Misto") + '</div>' +
             '<div><label class="field-label">Linguagem do código</label>' + gSel("gLing", ["SQL", "PySpark", "Python", "Misto"], "Misto") + '</div>' +
+            '<div class="gfull"><label class="meta"><input id="gStudyCards" type="checkbox" checked> Criar cards explicativos para estudar antes das questões</label><p class="meta">A IA prepara pequenos cards com conceitos, explicações e exemplos antes dos exercícios.</p></div>' +
             '<div class="gfull"><label class="field-label">Instruções extras (opcional)</label><textarea id="gExtra" rows="2" placeholder="Ex.: use dados de vendas; foque em erros comuns..."></textarea></div></div></details>' +
             '<div class="gfull api-key-panel"><span class="lv">CONFIGURAR PROVEDOR</span><label class="field-label" id="gApiProviderLabel" for="gApi">Chave da API</label><input id="gApi" type="password" autocomplete="off" placeholder="Cole sua chave/token aqui"><div id="gAccountIdField" hidden><label class="field-label" for="gAccountId">Cloudflare Account ID</label><input id="gAccountId" type="text" autocomplete="off" placeholder="32 caracteres (copiados do painel Cloudflare)"></div><p class="meta api-key-help"><label><input id="gRememberKey" type="checkbox"> Lembrar a chave neste navegador</label></p><p class="meta api-key-help">A chave/token fica disponível neste dispositivo. Não a compartilhe nem use em computadores públicos. <a id="gProviderKeyLink" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Criar chave</a> · <a href="#ia-study">Tutorial e privacidade</a>.</p></div>' +
             '<div class="gfull api-key-panel"><label class="field-label"><input id="gFallbackEnabled" type="checkbox" checked> Usar automaticamente outro provedor conectado se este falhar</label><p class="meta api-key-help">Tenta outro provedor configurado em limite, indisponibilidade temporária ou resposta truncada. A mesma pergunta e o histórico podem ser enviados ao próximo serviço. Desmarque para manter tudo no provedor principal.</p><p class="meta api-key-help" id="gConnectedProviders"></p></div>' +
@@ -5387,6 +5378,31 @@ async function genBatch(cfg, n, evitar) {
     });
 }
 
+async function genStudyCards(cfg) {
+    var prompt = "Crie 4 cards didáticos curtos, em português do Brasil, para preparar o estudante antes de responder questões sobre: " + cfg.tema + ". Contexto obrigatório: Databricks. Dificuldade: " + cfg.dif + ". Cada card deve ensinar algo útil, não fazer uma pergunta. Inclua conceito, explicação clara e exemplo concreto (SQL, Python ou PySpark quando adequado). Não inclua questões, alternativas ou gabaritos. Retorne somente JSON válido no formato {\"cards\":[{\"title\":\"...\",\"concept\":\"...\",\"explanation\":\"...\",\"example\":\"...\"}]} .";
+    var text = await requestStudyAi({
+        provider: GEN_CFG.provider, key: GEN_CFG.apiKey, model: GEN_CFG.model,
+        max_tokens: 1100, responseMimeType: "application/json", temperature: 0.35,
+        system: "Você é um professor de Databricks. Produza material de estudo correto, didático e conciso. Responda somente JSON válido.",
+        messages: [{ role: "user", content: prompt }]
+    });
+    var parsed;
+    try { parsed = JSON.parse(text); } catch (error) {
+        var match = String(text).match(/\{[\s\S]*\}/);
+        if (!match) throw new Error("Não foi possível interpretar os cards de estudo.");
+        parsed = JSON.parse(match[0]);
+    }
+    if (!parsed || !Array.isArray(parsed.cards)) throw new Error("A IA não retornou os cards de estudo.");
+    return parsed.cards.slice(0, 4).map(function (card) {
+        return {
+            title: String(card.title || "Conceito importante").slice(0, 100),
+            concept: String(card.concept || "").slice(0, 300),
+            explanation: String(card.explanation || "").slice(0, 900),
+            example: String(card.example || "").slice(0, 1200)
+        };
+    }).filter(function (card) { return card.explanation || card.concept; });
+}
+
 async function runGen() {
     if (!saveGenSettings()) return;
     var key = GEN_CFG.apiKey;
@@ -5405,7 +5421,7 @@ async function runGen() {
             var n = mixed ? 1 : Math.min(cfg.tipo === "Prática de código (IDE)" ? 2 : 5, qtd - all.length);
             if (mixed) {
                 /* Mix previsível: questões objetivas com enfoques diferentes e desafios reais de IDE. */
-                var mixedPlan = ["Múltipla escolha", "Prática de código (IDE)", "Cenário prático", "Prática de código (IDE)", "Conceitual"];
+                var mixedPlan = ["Múltipla escolha", "Prática de código (IDE)", "Múltipla escolha", "Prática de código (IDE)", "Múltipla escolha"];
                 cfg.tipo = mixedPlan[all.length % mixedPlan.length];
             }
             gStatus("⏳ Gerando questões " + (all.length + 1) + " a " + (all.length + n) + " de " + qtd + "...");
@@ -5431,10 +5447,20 @@ async function runGen() {
     }
 
     all = all.slice(0, qtd).map(function (q) { delete q._raw; return q; });
+    var studyCards = [];
+    if (document.getElementById("gStudyCards") && document.getElementById("gStudyCards").checked) {
+        try {
+            gStatus("📚 Preparando cards explicativos antes de salvar a aula...");
+            studyCards = await genStudyCards(cfg);
+        } catch (studyError) {
+            appNotice("As questões foram criadas, mas os cards de estudo não puderam ser gerados: " + studyError.message, true);
+        }
+    }
     var id = "ia_" + Date.now();
     var aula = {
         id: id, t: "🤖 " + cfg.tema + " · " + cfg.dif + " (" + all.length + ")", d: (all.length * 2) + " min",
-        h: "Questões geradas por IA sobre " + cfg.tema + ". Dificuldade: " + cfg.dif + ". Tipo: " + cfg.tipo + ".",
+        h: "Estude os cards explicativos abaixo antes de responder. Tema: " + cfg.tema + ". Dificuldade: " + cfg.dif + ". Tipo: " + cfg.tipo + ".",
+        studyCards: studyCards,
         q: all
     };
     var mod = MODS.find(function (m) { return m.ia; });
@@ -5448,8 +5474,6 @@ async function runGen() {
     closeGenModal();
     location.hash = "#" + id;
 }
-
-;
 /* ---------- Mostra nível/tipo de cada questão no cartão ---------- */
 var _lessonOriginal = lesson;
 lesson = function (x, i) {
