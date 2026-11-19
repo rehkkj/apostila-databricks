@@ -1,0 +1,14 @@
+{
+  "name": "apostila-databricks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Apostila interativa de Databricks (HTML + CSS + JavaScript)",
+  "scripts": {
+    "dev": "npx --yes serve .",
+    "build": "node build.mjs",
+    "preview": "npx --yes serve dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

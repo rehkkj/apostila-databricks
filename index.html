@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Apostila interativa de Databricks com módulos, aulas, questões práticas e tutor de IA.">
+    <meta name="theme-color" content="#071018">
+    <title>Apostila Databricks</title>
+    <link rel="icon" href="data:,">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"></noscript>
+    <link rel="stylesheet" href="src/css/styles.css">
+    <script defer src="src/js/00-fonts.js"></script>
+    <script defer src="src/js/05-perf.js"></script>
+    <script defer src="src/js/10-config.js"></script>
+    <script defer src="src/js/20-content.js"></script>
+    <script defer src="src/js/30-app.js"></script>
+    <script defer src="src/js/40-ai.js"></script>
+    <script defer src="src/js/90-main.js"></script>
+</head>
+
+<body>
+    <div class="bg-grid"></div>
+    <div class="background-effect" aria-hidden="true"></div>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="background-detail"></div>
+    <div class="particles"></div>
+    <div id="mouseFx" class="mouse-fx" aria-hidden="true"><span class="mouse-ring"></span><span class="mouse-inner"></span><span class="mouse-core"></span><span class="mouse-orbit"></span><span class="mouse-trail"></span></div>
+    <div id="mouseFollower" class="mouse-follower" aria-hidden="true"></div>
+
+    <header>
+        <div class="header-left">
+            <a href="#home" class="logo" title="Início">
+                <span class="logo-dot" id="headerLogoIcon">●</span>
+                <strong id="headerBrandName">Databricks Academy</strong>
+            </a>
+        </div>
+
+        <div class="menu-container">
+            <button id="menuDropdownBtn" class="btn-header menu-dropdown-btn">
+                <span>📚 Módulos e Aulas</span>
+                <span>▼</span>
+            </button>
+            <div id="dropdownBackdrop" class="dropdown-backdrop hidden"></div>
+            <div id="dropdownPanel" class="dropdown-panel"></div>
+        </div>
+
+        <div class="header-right">
+            <button type="button" id="appLogsButton" class="btn-header app-logs-button" title="Ver avisos recentes" aria-label="Ver avisos recentes">◷ Logs</button>
+            <div class="ai-tools-container">
+                <button type="button" id="aiToolsMenuBtn" class="btn-header" aria-controls="aiToolsMenu" aria-expanded="false">🤖 IA <span aria-hidden="true">▾</span></button>
+                <div id="aiToolsMenu" class="ai-tools-menu" role="menu" hidden>
+                    <button type="button" role="menuitem" data-ai-menu-action="tutor">💬 Tirar uma dúvida</button>
+                    <button type="button" role="menuitem" data-ai-menu-action="generator">✨ Criar questões</button>
+                </div>
+            </div>
+            <a href="#admin" class="btn-header" title="Editor do Site">🛠️ Editor</a>
+            <button id="th" class="btn-header theme-toggle" title="Alternar tema" aria-label="Alternar tema">🌙</button>
+        </div>
+    </header>
+
+    <button id="layoutModeToggle" class="layout-mode-toggle" type="button" aria-label="Mudar para rolagem contínua">
+        <span class="layout-mode-icon" aria-hidden="true">↕</span><span>Rolagem contínua</span>
+    </button>
+
+    <nav id="mobileNavigation" class="mobile-navigation" aria-label="Navegação principal">
+        <a href="#home">
+            <span aria-hidden="true">⌂</span>
+            <span>Início</span>
+        </a>
+        <button type="button" id="mobileLessonsButton" aria-controls="dropdownPanel">
+            <span aria-hidden="true">☰</span>
+            <span>Aulas</span>
+        </button>
+        <button type="button" id="mobileAiButton" aria-controls="aiToolsMenu" aria-expanded="false">
+            <span aria-hidden="true">✦</span>
+            <span>IA</span>
+        </button>
+        <a href="#admin">
+            <span aria-hidden="true">⚙</span>
+            <span>Editor</span>
+        </a>
+    </nav>
+
+    <div class="wrap">
+        <main id="main"></main>
+    </div>
+</body>
+
+</html>
