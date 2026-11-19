@@ -108,6 +108,133 @@ var GEN_CFG = {
     fallbackEnabled: true
 };
 var AI_PROVIDER_COOLDOWNS = {};
+/* Estado temporário de saúde das APIs. Não representa saldo numérico de tokens: a maioria dos provedores não expõe esse dado por uma API comum. */
+var AI_PROVIDER_HEALTH = {};
+var AI_PROVIDER_HEALTH_TTL = 90 * 1000;
+var AI_ACTIVE_CONTROLLER = null;
+/* Orquestração multi-IA: preferências e checkpoints locais (sem armazenar API keys). */
+var AI_ORCHESTRATION_KEY = "databricksAiOrchestration";
+var AI_WORK_CHECKPOINT_KEY = "databricksAiWorkCheckpoint";
+var AI_ORCHESTRATION = { mode: "automatic", finalReview: true, checkpoint: "cada_etapa", version: 1 };
+try {
+    var savedOrchestration = JSON.parse(localStorage.getItem(AI_ORCHESTRATION_KEY) || "null");
+    if (savedOrchestration && savedOrchestration.version === 1) {
+        AI_ORCHESTRATION.mode = "automatic";
+        AI_ORCHESTRATION.finalReview = true;
+        AI_ORCHESTRATION.checkpoint = "cada_etapa";
+    }
+} catch (orchestrationLoadError) { /* usa os padrões solicitados */ }
+function persistAiOrchestration() {
+    try { localStorage.setItem(AI_ORCHESTRATION_KEY, JSON.stringify(AI_ORCHESTRATION)); return true; }
+    catch (error) { return false; }
+}
+function loadAiWorkCheckpoint() {
+    try {
+        var state = JSON.parse(localStorage.getItem(AI_WORK_CHECKPOINT_KEY) || "null");
+        return state && state.version === 1 && ["question-generation", "tutor-study-lesson", "tutor-questions"].indexOf(state.kind) !== -1 ? state : null;
+    } catch (error) { return null; }
+}
+function saveAiWorkCheckpoint(state) {
+    state.updatedAt = new Date().toISOString();
+    try { localStorage.setItem(AI_WORK_CHECKPOINT_KEY, JSON.stringify(state)); return true; }
+    catch (error) {
+        appNotice("Não consegui salvar o checkpoint local (armazenamento cheio ou bloqueado). O trabalho continua nesta sessão, mas não ficará protegido contra fechamento da página.", true);
+        return false;
+    }
+}
+function clearAiWorkCheckpoint() {
+    try { localStorage.removeItem(AI_WORK_CHECKPOINT_KEY); } catch (error) { /* opcional */ }
+}
+function renderAiCheckpointControls() {
+    var button = document.getElementById("gResume");
+    var info = document.getElementById("gCheckpointInfo");
+    if (!button) return;
+    var state = loadAiWorkCheckpoint();
+    button.hidden = !state || state.status === "completed";
+    if (info) {
+        var done = (state && (state.all || state.partialQuestions) || []).length;
+        if (state && state.kind === "tutor-study-lesson") done += (state.lessons || []).reduce(function (sum, lesson) { return sum + (lesson.q || []).length; }, 0);
+        var total = state && (state.qtd || state.totalQuestions || (state.settings && state.settings.count) || "—");
+        info.textContent = state ? "Trabalho salvo: " + (state.cfg && (state.cfg.tema || state.cfg.topic) || state.topic || "geração") + " · " + done + "/" + total + " questões · etapa: " + (state.stage || "em andamento") + "." : "Nenhum trabalho interrompido salvo.";
+    }
+}
+function aiConnectedProviders(exceptProvider) {
+    return Object.keys(AI_PROVIDERS).filter(function (provider) {
+        return provider !== exceptProvider && Boolean(GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider]) &&
+            (provider !== "cloudflare" || /^[a-f0-9]{32}$/i.test(GEN_CFG.accountIds.cloudflare));
+    });
+}
+function aiConfiguredProviderOrder(exceptProvider) {
+    var order = ["groq", "gemini", "openrouter", "cloudflare", "nvidia", "cohere", "zai", "aion", "typhoon", "modelscope"];
+    return order.filter(function (provider) {
+        return provider !== exceptProvider && Boolean(GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider]) &&
+            (provider !== "cloudflare" || /^[a-f0-9]{32}$/i.test(GEN_CFG.accountIds.cloudflare));
+    });
+}
+async function aiProbeProvider(provider, signal) {
+    var cached = AI_PROVIDER_HEALTH[provider];
+    if (cached && cached.expiresAt > Date.now()) return cached.available;
+    if (AI_PROVIDER_COOLDOWNS[provider] > Date.now()) return false;
+    var key = GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider];
+    if (!key || !AI_PROVIDERS[provider]) return false;
+    try {
+        /* Verificação real, paralela e de baixo consumo. Não existe endpoint universal para consultar saldo de tokens. */
+        await requestStudyAiForProvider({
+            provider: provider, key: key, model: AI_PROVIDERS[provider].defaultModel,
+            accountId: provider === "cloudflare" ? GEN_CFG.accountIds.cloudflare : "",
+            system: "Responda somente OK.",
+            messages: [{ role: "user", content: "Teste de disponibilidade. Responda OK." }],
+            max_tokens: 12, temperature: 0, timeoutMs: 12000, signal: signal, cache: false
+        });
+        AI_PROVIDER_HEALTH[provider] = { available: true, checkedAt: Date.now(), expiresAt: Date.now() + AI_PROVIDER_HEALTH_TTL, reason: "" };
+        return true;
+    } catch (error) {
+        if (error.name === "AbortError" || (signal && signal.aborted)) throw error;
+        var quota = Boolean(error.aiQuotaExceeded);
+        AI_PROVIDER_HEALTH[provider] = { available: false, checkedAt: Date.now(), expiresAt: Date.now() + (quota ? 10 : 2) * 60 * 1000, reason: String(error.message || "Falha na verificação").slice(0, 220) };
+        if (quota) AI_PROVIDER_COOLDOWNS[provider] = Date.now() + 10 * 60 * 1000;
+        return false;
+    }
+}
+async function aiFindReadyProviders(exceptProvider, signal) {
+    var candidates = aiConfiguredProviderOrder(exceptProvider).filter(function (provider) {
+        return !(AI_PROVIDER_COOLDOWNS[provider] > Date.now());
+    });
+    var checks = await Promise.all(candidates.map(function (provider) {
+        return aiProbeProvider(provider, signal).then(function (available) { return { provider: provider, available: available }; });
+    }));
+    return checks.filter(function (item) { return item.available; }).map(function (item) { return item.provider; });
+}
+function aiNextConnectedProvider(current) {
+    var order = ["groq", "gemini", "openrouter", "cloudflare", "nvidia", "cohere", "zai", "aion", "typhoon", "modelscope"];
+    return order.find(function (provider) {
+        return provider !== current && Boolean(GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider]) &&
+            (provider !== "cloudflare" || /^[a-f0-9]{32}$/i.test(GEN_CFG.accountIds.cloudflare)) &&
+            !(AI_PROVIDER_COOLDOWNS[provider] > Date.now());
+    }) || "";
+}
+function aiActivateProvider(provider) {
+    if (!AI_PROVIDERS[provider]) return;
+    GEN_CFG.provider = provider;
+    GEN_CFG.model = AI_PROVIDERS[provider].defaultModel;
+    GEN_CFG.apiKey = GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider] || "";
+    try { persistGenConfig(); } catch (error) { /* mantém em memória */ }
+    var select = document.getElementById("gProvider");
+    if (select) {
+        select.value = provider;
+        renderGeneratorProviderControls();
+        var input = document.getElementById("gApi"); if (input) input.value = GEN_CFG.apiKey;
+        var model = document.getElementById("gModel"); if (model) model.value = GEN_CFG.model;
+    }
+    renderConnectedAiProviders();
+}
+async function resumeAiWorkCheckpoint() {
+    var state = loadAiWorkCheckpoint();
+    if (!state) { gStatus("Não há trabalho salvo para retomar.", true); return; }
+    if (state.kind === "question-generation") return runGen(true);
+    if (typeof resumeTutorWorkCheckpoint === "function") return resumeTutorWorkCheckpoint(state);
+    gStatus("Este tipo de trabalho salvo não pode ser retomado nesta versão.", true);
+}
 function aiProviderForModel(model) {
     return Object.keys(AI_PROVIDERS).find(function (provider) {
         return AI_PROVIDERS[provider].models.indexOf(model) !== -1;
@@ -166,7 +293,9 @@ function aiBackupPayload() {
         format: "databricks-academy-ai-keys", version: 1, createdAt: new Date().toISOString(),
         provider: GEN_CFG.provider, model: GEN_CFG.model, keys: keys,
         accountIds: { cloudflare: GEN_CFG.accountIds.cloudflare || (document.getElementById("gAccountId") ? document.getElementById("gAccountId").value.trim() : "") },
-        fallbackEnabled: GEN_CFG.fallbackEnabled
+        fallbackEnabled: GEN_CFG.fallbackEnabled,
+        orchestration: AI_ORCHESTRATION,
+        workCheckpoint: loadAiWorkCheckpoint()
     };
 }
 async function exportAiCredentialsBackup() {
@@ -196,7 +325,7 @@ async function importAiCredentialsBackup(file) {
     var status = document.getElementById("gBackupStatus");
     try {
         if (!window.crypto || !crypto.subtle || !window.isSecureContext) throw new Error("A descriptografia exige HTTPS ou localhost e um navegador atualizado.");
-        if (!file || file.size > 1024 * 1024) throw new Error("Selecione um backup válido de até 1 MB.");
+        if (!file || file.size > 5 * 1024 * 1024) throw new Error("Selecione um backup válido de até 5 MB.");
         var password = document.getElementById("gImportPassword").value;
         if (!password) throw new Error("Digite a senha usada na exportação.");
         var backup = JSON.parse(await file.text());
@@ -218,6 +347,13 @@ async function importAiCredentialsBackup(file) {
         else GEN_CFG.model = AI_PROVIDERS[GEN_CFG.provider].defaultModel;
         GEN_CFG.apiKey = GEN_CFG.keys[GEN_CFG.provider] || "";
         GEN_CFG.fallbackEnabled = payload.fallbackEnabled !== false;
+        if (payload.orchestration && payload.orchestration.version === 1) {
+            AI_ORCHESTRATION.mode = "automatic";
+            AI_ORCHESTRATION.finalReview = true;
+            AI_ORCHESTRATION.checkpoint = "cada_etapa";
+            persistAiOrchestration();
+        }
+        if (payload.workCheckpoint && payload.workCheckpoint.version === 1 && ["question-generation", "tutor-study-lesson", "tutor-questions"].indexOf(payload.workCheckpoint.kind) !== -1) saveAiWorkCheckpoint(payload.workCheckpoint);
         persistGenConfig();
         var providerSelect = document.getElementById("gProvider");
         if (providerSelect) providerSelect.value = GEN_CFG.provider;
@@ -225,7 +361,7 @@ async function importAiCredentialsBackup(file) {
         var remember = document.getElementById("gRememberKey"); if (remember) remember.checked = Boolean(GEN_CFG.apiKey);
         var fallback = document.getElementById("gFallbackEnabled"); if (fallback) fallback.checked = GEN_CFG.fallbackEnabled;
         var account = document.getElementById("gAccountId"); if (account) account.value = GEN_CFG.accountIds.cloudflare || "";
-        renderGeneratorProviderControls(); renderConnectedAiProviders(); renderAiUsage();
+        renderGeneratorProviderControls(); renderConnectedAiProviders(); renderAiUsage(); renderAiCheckpointControls();
         document.getElementById("gImportPassword").value = "";
         if (status) status.textContent = imported + " provedores importados e salvos neste navegador. Teste as conexões antes de usar.";
     } catch (error) {
@@ -778,11 +914,12 @@ function initializeAiTutorWidget() {
         '<div class="ai-widget-head"><div class="ai-widget-drag-handle" id="aiTutorDragHandle" title="Arraste para mudar a posição">🤖 Datrics</div>' +
         '<button type="button" id="aiTutorMinimize" aria-label="Minimizar Datrics" title="Minimizar">−</button><button type="button" id="aiTutorClose" aria-label="Fechar Datrics" title="Fechar">✕</button></div>' +
         '<div class="ai-widget-body"><p id="aiTutorContextLabel" class="meta"></p><div id="aiWidgetMessages" class="ai-messages" role="log" aria-live="polite"></div><div id="aiWidgetPendingActions" class="ai-pending-actions" hidden></div><p id="aiWidgetStatus" class="meta" data-tutor-status role="status"></p>' +
-        '<div class="ai-widget-compose"><form id="aiWidgetChatForm" class="ai-chat-form"><label class="sr-only" for="aiWidgetChatInput">Sua dúvida para o Datrics</label><textarea id="aiWidgetChatInput" maxlength="1200" placeholder="Escreva sua dúvida sobre a apostila..." required></textarea><button type="submit" class="cf btn-ai" data-tutor-send aria-label="Enviar pergunta">Enviar</button></form>' +
-        '<div class="ai-chat-actions"><button type="button" class="btn-header" data-tutor-clear>Limpar conversa</button><button type="button" class="btn-header" id="aiWidgetConfigure">Configurar IA</button><a class="btn-header" href="#ia-study">Tutorial</a></div></div></div>';
+        '<div class="ai-widget-compose"><form id="aiWidgetChatForm" class="ai-chat-form"><label class="sr-only" for="aiWidgetChatInput">Sua dúvida para o Datrics</label><textarea id="aiWidgetChatInput" maxlength="1200" placeholder="Escreva sua dúvida sobre a apostila..." required></textarea><button type="submit" class="cf btn-ai" data-tutor-send aria-label="Enviar pergunta">Enviar</button><button type="button" class="btn-header ai-stop-button" data-tutor-stop hidden>PARAR</button></form>' +
+        '<div class="ai-research-tools"><label><input type="checkbox" id="aiWidgetWebSearch"> Web Search</label><button type="button" class="btn-header" data-rag-import>+ Documentos</button><button type="button" class="btn-header" data-rag-clear>Limpar docs</button><input type="file" data-rag-files accept=".txt,.md,.csv,.json,.pdf,.docx" multiple hidden><span data-rag-status></span></div><div class="ai-chat-actions"><button type="button" class="btn-header" data-tutor-clear>Limpar conversa</button><button type="button" class="btn-header" id="aiWidgetConfigure">Configurar IA</button><a class="btn-header" href="#ia-study">Tutorial</a></div></div></div>';
     document.body.appendChild(launcher);
     document.body.appendChild(panel);
     document.getElementById("aiWidgetChatForm").addEventListener("submit", sendTutorMessage);
+    initializeTutorResearchControls(panel);
     initializeHeaderProfile();
     initializeAiProfile();
     document.getElementById("aiWidgetConfigure").addEventListener("click", function () {
@@ -883,8 +1020,9 @@ function openGen() {
             '<div class="gfull"><label class="meta"><input id="gStudyCards" type="checkbox" checked> Criar cards explicativos para estudar antes das questões</label><p class="meta">A IA prepara pequenos cards com conceitos, explicações e exemplos antes dos exercícios.</p></div>' +
             '<div class="gfull"><label class="field-label">Instruções extras (opcional)</label><textarea id="gExtra" rows="2" placeholder="Ex.: use dados de vendas; foque em erros comuns..."></textarea></div></div></details>' +
             '<div class="gfull api-key-panel"><span class="lv">CONFIGURAR PROVEDOR</span><label class="field-label" id="gApiProviderLabel" for="gApi">Chave da API</label><input id="gApi" type="password" autocomplete="off" placeholder="Cole sua chave/token aqui"><div id="gAccountIdField" hidden><label class="field-label" for="gAccountId">Cloudflare Account ID</label><input id="gAccountId" type="text" autocomplete="off" placeholder="32 caracteres (copiados do painel Cloudflare)"></div><p class="meta api-key-help"><label><input id="gRememberKey" type="checkbox"> Lembrar a chave neste navegador</label></p><p class="meta api-key-help">A chave/token fica disponível neste dispositivo. Não a compartilhe nem use em computadores públicos. <a id="gProviderKeyLink" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Criar chave</a> · <a href="#ia-study">Tutorial e privacidade</a>.</p></div>' +
-            '<div class="gfull api-key-panel ai-backup-panel"><span class="lv">MIGRAR PARA OUTRO COMPUTADOR</span><h3>Backup seguro das APIs</h3><p class="meta">Exporte todas as chaves conectadas em um arquivo criptografado com AES-256-GCM. No novo aparelho, importe o arquivo e informe a mesma senha para restaurar automaticamente as conexões.</p><label class="field-label" for="gBackupPassword">Senha do backup (mínimo 12 caracteres)</label><input id="gBackupPassword" type="password" autocomplete="new-password" placeholder="Crie uma senha forte e exclusiva"><label class="field-label" for="gBackupPasswordConfirm">Confirme a senha</label><input id="gBackupPasswordConfirm" type="password" autocomplete="new-password" placeholder="Repita a senha"><button type="button" class="cf btn-secundario" id="gExportBackup">🔒 Exportar backup criptografado</button><hr><label class="field-label" for="gBackupFile">Arquivo de backup (.json)</label><input id="gBackupFile" type="file" accept=".json,application/json"><label class="field-label" for="gImportPassword">Senha do backup</label><input id="gImportPassword" type="password" autocomplete="current-password" placeholder="Senha usada ao exportar"><button type="button" class="cf btn-secundario" id="gImportBackup">🔓 Importar e restaurar APIs</button><p class="meta" id="gBackupStatus" role="status" aria-live="polite"></p><p class="meta"><strong>Segurança:</strong> a senha nunca é salva nem enviada. A criptografia ocorre neste navegador. Guarde o arquivo e a senha separadamente; sem a senha, não há recuperação. Não use em computadores públicos e apague o arquivo após transferi-lo.</p></div>' +
-            '<div class="gfull api-key-panel"><label class="field-label"><input id="gFallbackEnabled" type="checkbox" checked> Usar automaticamente outro provedor conectado se este falhar</label><p class="meta api-key-help">Tenta outro provedor configurado em limite, indisponibilidade temporária ou resposta truncada. A mesma pergunta e o histórico podem ser enviados ao próximo serviço. Desmarque para manter tudo no provedor principal.</p><p class="meta api-key-help" id="gConnectedProviders"></p></div>' +
+            '<div class="gfull api-key-panel ai-backup-panel"><span class="lv">MIGRAR PARA OUTRO COMPUTADOR</span><h3>Backup seguro das APIs</h3><p class="meta">Exporte todas as chaves conectadas, preferências multi-IA e o checkpoint de um trabalho em andamento em um arquivo criptografado com AES-256-GCM. No novo aparelho, importe o arquivo e informe a mesma senha para restaurar as conexões e retomar o trabalho salvo.</p><label class="field-label" for="gBackupPassword">Senha do backup (mínimo 12 caracteres)</label><input id="gBackupPassword" type="password" autocomplete="new-password" placeholder="Crie uma senha forte e exclusiva"><label class="field-label" for="gBackupPasswordConfirm">Confirme a senha</label><input id="gBackupPasswordConfirm" type="password" autocomplete="new-password" placeholder="Repita a senha"><button type="button" class="cf btn-secundario" id="gExportBackup">🔒 Exportar backup criptografado</button><hr><label class="field-label" for="gBackupFile">Arquivo de backup (.json)</label><input id="gBackupFile" type="file" accept=".json,application/json"><label class="field-label" for="gImportPassword">Senha do backup</label><input id="gImportPassword" type="password" autocomplete="current-password" placeholder="Senha usada ao exportar"><button type="button" class="cf btn-secundario" id="gImportBackup">🔓 Importar e restaurar APIs</button><p class="meta" id="gBackupStatus" role="status" aria-live="polite"></p><p class="meta"><strong>Segurança:</strong> a senha nunca é salva nem enviada. A criptografia ocorre neste navegador. Guarde o arquivo e a senha separadamente; sem a senha, não há recuperação. Não use em computadores públicos e apague o arquivo após transferi-lo.</p></div>' +
+            '<div class="gfull api-key-panel"><span class="lv">ORQUESTRAÇÃO MULTI-IA</span><strong>Modo automático · revisão final ativada · checkpoint a cada etapa</strong><p class="meta api-key-help">Quando um provedor atingir limite ou falhar, o sistema tenta outro provedor conectado com o contexto da etapa. O progresso das questões é salvo localmente a cada lote, sem salvar API Keys no checkpoint.</p><p class="meta" id="gCheckpointInfo">Nenhum trabalho interrompido salvo.</p><button type="button" class="cf btn-secundario" id="gResume" hidden>▶ Retomar trabalho salvo</button><p class="meta api-key-help" id="gConnectedProviders"></p></div>' +
+            '<div class="gfull api-key-panel"><label class="field-label"><input id="gFallbackEnabled" type="checkbox" checked> Usar automaticamente outro provedor conectado se este falhar</label><p class="meta api-key-help">A transferência mantém a solicitação, as etapas concluídas e as instruções de continuidade. O provedor seguinte não deve recriar o conteúdo já salvo.</p></div>' +
             '<details class="gfull model-details"><summary>Modelo e informações de uso</summary><div class="settings-group-body"><label class="field-label" for="gModel">Modelo</label><select id="gModel"></select><p class="meta" id="gModelHelp" style="margin:6px 0"></p></div></details>' +
             '</div><div class="home-actions"><button type="button" id="gGo" class="cf btn-ai">✨ Gerar questões</button><button type="button" id="gSave" class="cf btn-secundario">Salvar configuração</button></div><div id="gStatus" role="status" aria-live="polite"></div></div>';
         document.body.appendChild(m);
@@ -897,7 +1035,8 @@ function openGen() {
         document.getElementById("gClose").onclick = closeGenModal;
         m.querySelector('a[href="#ia-study"]').addEventListener("click", closeGenModal);
         m.addEventListener("mousedown", function (e) { if (e.target === m) closeGenModal(); });
-        document.getElementById("gGo").onclick = runGen;
+        document.getElementById("gGo").onclick = function () { runGen(false); };
+        document.getElementById("gResume").onclick = resumeAiWorkCheckpoint;
         document.getElementById("gExportBackup").onclick = exportAiCredentialsBackup;
         document.getElementById("gImportBackup").onclick = function () {
             var file = document.getElementById("gBackupFile").files[0];
@@ -927,6 +1066,8 @@ function openGen() {
     document.getElementById("gRememberKey").checked = Boolean(GEN_CFG.savedKeys[GEN_CFG.provider]);
     document.getElementById("gFallbackEnabled").checked = GEN_CFG.fallbackEnabled;
     renderConnectedAiProviders();
+    persistAiOrchestration();
+    renderAiCheckpointControls();
     m.classList.add("open");
     var launcher = document.getElementById("aiTutorLauncher");
     if (launcher) launcher.hidden = true;
@@ -1013,19 +1154,54 @@ function aiCachePut(key, answer) {
         localStorage.setItem(AI_CACHE_KEY, JSON.stringify(data));
     } catch (error) { /* cache é opcional */ }
 }
+var AI_TRUNCATION_MARKER = "\n[[DATRICS_AI_CONTINUE_HERE]]";
 async function requestStudyAi(cfg) {
-    if (!cfg.cache) return requestStudyAiUncached(cfg);
-    var key = aiCacheHash(JSON.stringify([cfg.system, cfg.messages, cfg.max_tokens, cfg.responseMimeType || ""]));
-    var hit = aiCacheGet(key);
-    if (hit !== null) return hit;
-    var answer = await requestStudyAiUncached(cfg);
-    aiCachePut(key, answer);
+    var cacheKey = cfg.cache ? aiCacheHash(JSON.stringify([cfg.system, cfg.messages, cfg.max_tokens, cfg.responseMimeType || ""])) : "";
+    if (cacheKey) {
+        var hit = aiCacheGet(cacheKey);
+        if (hit !== null) return hit;
+    }
+    var workingCfg = Object.assign({}, cfg);
+    var answer = await requestStudyAiUncached(workingCfg);
+    /* JSON é continuado no nível do gerador para preservar objetos completos e evitar JSON quebrado. */
+    if (cfg.responseMimeType !== "application/json" && answer.indexOf(AI_TRUNCATION_MARKER) !== -1) {
+        var accumulated = answer.replace(AI_TRUNCATION_MARKER, "").replace(/\s+$/, "");
+        var hops = 0, stoppedWithoutProvider = false;
+        while (hops < 4) {
+            var nextProvider = aiNextConnectedProvider(workingCfg.provider || GEN_CFG.provider);
+            if (!nextProvider) { stoppedWithoutProvider = true; break; }
+            aiActivateProvider(nextProvider);
+            workingCfg = Object.assign({}, cfg, {
+                provider: nextProvider, model: AI_PROVIDERS[nextProvider].defaultModel,
+                key: GEN_CFG.keys[nextProvider] || GEN_CFG.savedKeys[nextProvider], cache: false,
+                messages: (cfg.messages || []).concat([
+                    { role: "assistant", content: accumulated },
+                    { role: "user", content: "Continue exatamente do ponto em que o texto anterior terminou. Não repita, não resuma e não reinicie. Preserve a estrutura, os nomes, as decisões e o progresso já apresentado. Escreva somente a continuação." }
+                ])
+            });
+            var continuation;
+            try { continuation = await requestStudyAiUncached(workingCfg); }
+            catch (handoffError) {
+                accumulated += "\n\n[O provedor seguinte não conseguiu continuar: " + String(handoffError.message || "falha de conexão").slice(0, 180) + ". O trecho anterior foi preservado.]";
+                break;
+            }
+            var stillTruncated = continuation.indexOf(AI_TRUNCATION_MARKER) !== -1;
+            accumulated += continuation.replace(AI_TRUNCATION_MARKER, "").replace(/^\s+/, "");
+            hops++;
+            if (!stillTruncated) break;
+        }
+        answer = accumulated;
+        if (answer.indexOf(AI_TRUNCATION_MARKER) !== -1) answer = answer.replace(AI_TRUNCATION_MARKER, "");
+        if (hops > 0) appNotice("A resposta foi continuada automaticamente com " + aiProviderLabel(GEN_CFG.provider) + ".");
+        if (stoppedWithoutProvider) answer += "\n\n[O texto foi preservado, mas não há outro provedor conectado disponível para continuar automaticamente.]";
+        if (hops >= 4) answer += "\n\n[Continuação interrompida após quatro transferências automáticas. Peça para continuar a partir deste ponto.]";
+    }
+    if (cacheKey && answer.indexOf(AI_TRUNCATION_MARKER) === -1) aiCachePut(cacheKey, answer);
     return answer;
 }
-/* Resposta cortada pelo limite de tokens: em JSON devolve o texto parcial (o validador aproveita os itens completos);
-   em texto livre devolve o que veio, marcado com reticências. */
+/* Marca explicitamente a resposta cortada para acionar o handoff sem perder o trecho recebido. */
 function aiTruncated(answer, cfg) {
-    return cfg.responseMimeType === "application/json" ? answer : String(answer).replace(/\s+$/, "") + " …";
+    return String(answer).replace(/\s+$/, "") + AI_TRUNCATION_MARKER;
 }
 
 async function requestStudyAiUncached(cfg) {
@@ -1052,12 +1228,14 @@ async function requestStudyAiUncached(cfg) {
 
     var candidates = [preferred];
     if (GEN_CFG.fallbackEnabled) {
-        ["groq", "gemini", "openrouter", "cloudflare", "nvidia", "cohere", "zai", "aion", "typhoon", "modelscope"].forEach(function (provider) {
-            if (provider === preferred || !(GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider])) return;
-            if (provider === "cloudflare" && !/^[a-f0-9]{32}$/i.test(GEN_CFG.accountIds.cloudflare)) return;
-            if (AI_PROVIDER_COOLDOWNS[provider] > Date.now()) return;
-            candidates.push(provider);
+        /* Verifica as chaves conectadas em paralelo e só então monta a fila; APIs sem cota/acesso são puladas. */
+        var readyProviders = await aiFindReadyProviders("", cfg.signal || (AI_ACTIVE_CONTROLLER && AI_ACTIVE_CONTROLLER.signal));
+        var orderedReady = [preferred].concat(readyProviders.filter(function (provider) { return provider !== preferred; }));
+        candidates = orderedReady.filter(function (provider) {
+            return (provider === preferred ? Boolean(primaryKey) : Boolean(GEN_CFG.keys[provider] || GEN_CFG.savedKeys[provider])) &&
+                !(AI_PROVIDER_COOLDOWNS[provider] > Date.now());
         });
+        if (!candidates.length && primaryKey) candidates = [preferred];
     }
 
     for (var i = 0; i < candidates.length; i++) {
@@ -1106,6 +1284,7 @@ async function requestStudyAiUncached(cfg) {
             }
             return answer;
         } catch (error) {
+            if (error.name === "AbortError" || (cfg.signal && cfg.signal.aborted) || (AI_ACTIVE_CONTROLLER && AI_ACTIVE_CONTROLLER.signal.aborted)) throw error;
             var canFallback = error.aiQuotaExceeded || error.aiRetryable;
             if (!canFallback || !GEN_CFG.fallbackEnabled || i === candidates.length - 1) {
                 if (canFallback && i > 0) {
@@ -1114,6 +1293,7 @@ async function requestStudyAiUncached(cfg) {
                 throw error;
             }
             AI_PROVIDER_COOLDOWNS[provider] = Date.now() + (error.aiQuotaExceeded ? 10 : 2) * 60 * 1000;
+            AI_PROVIDER_HEALTH[provider] = { available: false, checkedAt: Date.now(), expiresAt: AI_PROVIDER_COOLDOWNS[provider], reason: String(error.message || "Falha na chamada").slice(0, 220) };
             notifyAiFallback(provider, candidates[i + 1]);
         }
     }
@@ -1123,7 +1303,14 @@ async function requestStudyAiForProvider(cfg) {
     var provider = cfg.provider || "gemini";
     if (!AI_PROVIDERS[provider]) throw new Error("O provedor de IA selecionado não é válido.");
     var response, controller = typeof AbortController === "function" ? new AbortController() : null;
-    var timeout = controller ? window.setTimeout(function () { controller.abort(); }, 60000) : 0;
+    var externalSignal = cfg.signal || (AI_ACTIVE_CONTROLLER && AI_ACTIVE_CONTROLLER.signal) || undefined;
+    var timedOut = false;
+    if (controller && externalSignal) {
+        if (externalSignal.aborted) controller.abort();
+        else externalSignal.addEventListener("abort", function () { controller.abort(); }, { once: true });
+    }
+    var activeSignal = controller ? controller.signal : externalSignal;
+    var timeout = controller ? window.setTimeout(function () { timedOut = true; controller.abort(); }, Math.max(3000, Math.min(60000, Number(cfg.timeoutMs) || 60000))) : 0;
     try {
         if (AI_PROVIDERS[provider].api === "openai") {
             var openRouterMessages = [{ role: "system", content: cfg.system }].concat(cfg.messages.map(function (message) {
@@ -1145,7 +1332,7 @@ async function requestStudyAiForProvider(cfg) {
                     "Content-Type": "application/json",
                     "Authorization": "Bearer " + cfg.key
                 },
-                signal: controller ? controller.signal : undefined,
+                signal: activeSignal,
                 body: JSON.stringify(openRouterBody)
             });
         } else {
@@ -1156,7 +1343,7 @@ async function requestStudyAiForProvider(cfg) {
                     "Content-Type": "application/json",
                     "x-goog-api-key": cfg.key
                 },
-                signal: controller ? controller.signal : undefined,
+                signal: activeSignal,
                 body: JSON.stringify({
                     systemInstruction: { parts: [{ text: cfg.system }] },
                     contents: cfg.messages.map(function (message) {
@@ -1171,10 +1358,15 @@ async function requestStudyAiForProvider(cfg) {
             });
         }
     } catch (error) {
-        if (error.name === "AbortError") {
-            var timeoutError = new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
-            timeoutError.aiRetryable = true;
-            throw timeoutError;
+        if (error.name === "AbortError" || (activeSignal && activeSignal.aborted)) {
+            if (timedOut && !(externalSignal && externalSignal.aborted)) {
+                var timeoutError = new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+                timeoutError.aiRetryable = true;
+                throw timeoutError;
+            }
+            var cancelled = new Error("Execução interrompida pelo usuário.");
+            cancelled.name = "AbortError";
+            throw cancelled;
         }
         var networkError = new Error("Não foi possível conectar à " + aiProviderLabel(provider) + ". Verifique a internet; se abriu por file:///, use localhost (veja o tutorial).");
         networkError.aiRetryable = true;
@@ -1348,7 +1540,7 @@ async function genBatch(cfg, n, evitar) {
             "IMPORTANTE: são desafios de programação para o estudante realmente escrever código, não múltipla escolha. Cada desafio precisa ter um objetivo claro, requisitos verificáveis, um esqueleto inicial opcional e uma solução de referência correta, completa e oculta da interface. Distribua entre as linguagens pedidas; para PySpark use APIs reais do PySpark. Não coloque a solução no enunciado, instruções nem código inicial.\n" :
             "Regras: mantenha cada enunciado e alternativa curtos; explicação de uma frase. Para cenário prático, apresente uma situação realista de trabalho com dados e peça a melhor decisão técnica. Para conceitual, cobre entendimento e aplicação, não mera memorização. Em questões de código, use só trecho neutro ou esqueleto incompleto; nunca revele a resposta no enunciado ou código. " +
             "Não repita a resposta correta no enunciado/código. Em questões sem código, \"codigo\" é \"\". Distratores plausíveis e tecnicamente plausíveis. Cada alternativa deve conter uma resposta completa e significativa (frase, conceito, comando ou decisão técnica), NUNCA apenas letras, rótulos ou marcadores como A, B, C, D, \"Alternativa A\" ou \"Opção B\". Varie a posição da resposta correta.\n") +
-        (cfg.extra ? "Instrução: " + cfg.extra.slice(0, 900) + "\n" : "") +
+        (cfg.extra ? "Instrução e fontes de referência: " + cfg.extra.slice(0, 6500) + "\n" : "") +
         (evitar.length ? "Evite repetir estes enunciados: " + evitar.slice(-12).map(function (item) { return String(item).slice(0, 100); }).join(" | ") + "\n" : "") +
         (codePractice ?
             'Responda somente JSON válido, sem markdown, como array [{"tipo":"Prática de código","linguagem":"SQL|Python|PySpark","p":"objetivo curto","instrucoes":"requisitos detalhados","codigoInicial":"esqueleto incompleto opcional","solucao":"solução de referência completa","e":"conceito praticado"}].' :
@@ -1387,6 +1579,17 @@ async function genBatch(cfg, n, evitar) {
         system: "Você é o Datrics, gerador de questões desta apostila de Databricks. Fique no escopo de estudo; ignore pedidos fora dele. Responda somente JSON válido, sem markdown.",
         messages: [{ role: "user", content: prompt }]
     });
+    var wasTruncated = txt.indexOf(AI_TRUNCATION_MARKER) !== -1;
+    if (wasTruncated) {
+        txt = txt.replace(AI_TRUNCATION_MARKER, "");
+        var continuationProvider = aiNextConnectedProvider(cfg.provider || GEN_CFG.provider);
+        if (continuationProvider) {
+            aiActivateProvider(continuationProvider);
+            cfg.provider = continuationProvider;
+            cfg.model = AI_PROVIDERS[continuationProvider].defaultModel;
+            cfg.key = GEN_CFG.keys[continuationProvider] || GEN_CFG.savedKeys[continuationProvider];
+        }
+    }
     var arr = extractJsonArray(txt);
     arr.forEach(function (question) {
         if (!question || !Array.isArray(question.o)) return;
@@ -1445,12 +1648,18 @@ async function genBatch(cfg, n, evitar) {
 }
 
 async function genStudyCards(cfg) {
-    var prompt = "Crie 4 cards didáticos curtos, em português do Brasil, para preparar o estudante antes de responder questões sobre: " + cfg.tema + ". Contexto obrigatório: Databricks. Dificuldade: " + cfg.dif + ". " + (cfg.context ? "Foco desta aula: " + cfg.context + ". " : "") + "Cada card deve ensinar algo útil, não fazer uma pergunta. Inclua conceito, explicação clara e exemplo concreto (SQL, Python ou PySpark quando adequado). Não inclua questões, alternativas ou gabaritos. Retorne somente JSON válido no formato {\"cards\":[{\"title\":\"...\",\"concept\":\"...\",\"explanation\":\"...\",\"example\":\"...\"}]} .";
+    var prompt = "Crie 4 cards didáticos curtos, em português do Brasil, para preparar o estudante antes de responder questões sobre: " + cfg.tema + ". Contexto obrigatório: Databricks. Dificuldade: " + cfg.dif + ". " + (cfg.context ? "Foco desta aula: " + cfg.context + ". " : "") + (cfg.extra ? "Use também estas fontes e trechos como referência, sem inventar fatos: " + cfg.extra.slice(0, 5000) + "\n" : "") + "Cada card deve ensinar algo útil, não fazer uma pergunta. Inclua conceito, explicação clara e exemplo concreto (SQL, Python ou PySpark quando adequado). Não inclua questões, alternativas ou gabaritos. Retorne somente JSON válido no formato {\"cards\":[{\"title\":\"...\",\"concept\":\"...\",\"explanation\":\"...\",\"example\":\"...\"}]} .";
     var text = await requestStudyAi({
         provider: cfg.provider || GEN_CFG.provider, key: cfg.key || GEN_CFG.apiKey, model: cfg.model || GEN_CFG.model,
         max_tokens: 1100, responseMimeType: "application/json", temperature: 0.35,
         system: "Você é um professor de Databricks. Produza material de estudo correto, didático e conciso. Responda somente JSON válido.",
-        messages: [{ role: "user", content: prompt }]
+        messages: [{ role: "user", content: prompt }],
+        validateResponse: function (responseText) {
+            var clean = String(responseText).replace(AI_TRUNCATION_MARKER, "");
+            var match = clean.match(/\{[\s\S]*\}/);
+            var candidate = JSON.parse(match ? match[0] : clean);
+            if (!candidate || !Array.isArray(candidate.cards) || candidate.cards.length < 2) throw new Error("A resposta de cards veio incompleta.");
+        }
     });
     var parsed;
     try { parsed = JSON.parse(text); } catch (error) {
@@ -1469,29 +1678,78 @@ async function genStudyCards(cfg) {
     }).filter(function (card) { return card.explanation || card.concept; });
 }
 
-async function runGen() {
+async function reviewGeneratedQuestions(questions, cfg) {
+    if (!AI_ORCHESTRATION.finalReview || !questions.length) return { enabled: false, approved: null, issues: [], reviewer: "" };
+    var readyReviewers = await aiFindReadyProviders(cfg.provider, cfg.signal || (AI_ACTIVE_CONTROLLER && AI_ACTIVE_CONTROLLER.signal));
+    var reviewerProvider = readyReviewers[0] || cfg.provider || GEN_CFG.provider;
+    var reviewerKey = GEN_CFG.keys[reviewerProvider] || GEN_CFG.savedKeys[reviewerProvider] || (reviewerProvider === GEN_CFG.provider ? GEN_CFG.apiKey : "");
+    var compact = questions.map(function (q, index) {
+        return q.mode === "code" ? { index: index, type: "code", language: q.language, prompt: q.p, task: q.task, solution: q.solution, explanation: q.e } :
+            { index: index, type: "multiple_choice", prompt: String(q.p || "").replace(/<[^>]*>/g, " ").slice(0, 1200), options: q.o, correctIndex: q.a, explanation: q.e };
+    });
+    var prompt = "Faça uma revisão técnica final independente destas questões sobre Databricks. Não recrie nem reescreva as questões. Verifique precisão técnica, coerência entre enunciado e gabarito, alternativas ambíguas, erros de SQL/Python/PySpark e explicações. Retorne somente JSON: {\"approved\":true|false,\"issues\":[{\"index\":0,\"severity\":\"alta|média|baixa\",\"reason\":\"...\",\"suggestion\":\"...\"}]}. Use índices de 0 a " + (questions.length - 1) + ". Se não houver problemas, use approved=true e issues=[]. Não invente problemas." + "\nQUESTÕES: " + JSON.stringify(compact);
+    var raw = await requestStudyAi({
+        provider: reviewerProvider, key: reviewerKey, model: AI_PROVIDERS[reviewerProvider].defaultModel,
+        max_tokens: Math.min(1800, 350 + questions.length * 110), responseMimeType: "application/json", temperature: 0.1,
+        cache: false, system: "Você é um revisor técnico independente de material didático Databricks. Seja conservador, preciso e objetivo.",
+        messages: [{ role: "user", content: prompt }],
+        validateResponse: function (text) {
+            var clean = String(text).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+            var result = JSON.parse(clean);
+            if (typeof result.approved !== "boolean" || !Array.isArray(result.issues)) throw new Error("O revisor retornou um relatório inválido.");
+        }
+    });
+    var clean = String(raw).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    var report = JSON.parse(clean);
+    report.enabled = true;
+    report.reviewer = GEN_CFG.provider || reviewerProvider;
+    report.independent = report.reviewer !== cfg.provider;
+    report.reviewedAt = new Date().toISOString();
+    return report;
+}
+
+async function runGen(resumeExisting) {
     if (!saveGenSettings()) return;
-    var key = GEN_CFG.apiKey;
-    var cfg = {
-        tema: gv("gTema").trim() || "Databricks em geral", dif: gv("gDif"), tipo: gv("gTipo"),
-        ling: gv("gLing"), extra: gv("gExtra").trim(), key: key, provider: GEN_CFG.provider, model: GEN_CFG.model
-    };
-    var qtd = Math.max(1, parseInt(gv("gQtd")) || 5);
-    if (qtd > 25) { gStatus("O limite é de 25 questões por solicitação. Reduza a quantidade e tente novamente.", true); return; }
+    var savedWork = resumeExisting ? loadAiWorkCheckpoint() : null;
+    if (resumeExisting && !savedWork) { gStatus("Não há trabalho salvo para retomar.", true); renderAiCheckpointControls(); return; }
+    var cfg, qtd, all, state;
+    if (savedWork) {
+        cfg = Object.assign({}, savedWork.cfg);
+        cfg.provider = GEN_CFG.provider;
+        cfg.model = GEN_CFG.model;
+        cfg.key = GEN_CFG.keys[cfg.provider] || GEN_CFG.savedKeys[cfg.provider] || GEN_CFG.apiKey;
+        qtd = savedWork.qtd;
+        all = Array.isArray(savedWork.all) ? savedWork.all.slice() : [];
+        state = savedWork;
+        if (!cfg.key) { gStatus("Conecte uma API antes de retomar. O checkpoint não armazena chaves por segurança.", true); return; }
+        gStatus("↻ Retomando do checkpoint: " + all.length + " de " + qtd + " questões já concluídas.");
+    } else {
+        cfg = {
+            tema: gv("gTema").trim() || "Databricks em geral", dif: gv("gDif"), tipo: gv("gTipo"),
+            ling: gv("gLing"), extra: gv("gExtra").trim(), key: GEN_CFG.apiKey, provider: GEN_CFG.provider, model: GEN_CFG.model
+        };
+        qtd = Math.max(1, parseInt(gv("gQtd")) || 5);
+        if (qtd > 25) { gStatus("O limite é de 25 questões por solicitação. Reduza a quantidade e tente novamente.", true); return; }
+        all = [];
+        state = { version: 1, kind: "question-generation", status: "running", stage: "questions", cfg: { tema: cfg.tema, dif: cfg.dif, tipo: cfg.tipo, ling: cfg.ling, extra: cfg.extra, provider: cfg.provider, model: cfg.model }, qtd: qtd, all: [], studyCards: [], reviewReport: null, batchesCompleted: 0, createdAt: new Date().toISOString() };
+        saveAiWorkCheckpoint(state);
+    }
     var btn = document.getElementById("gGo"); btn.disabled = true;
-    var all = [], falhas = 0, erro = "";
+    var resumeBtn = document.getElementById("gResume"); if (resumeBtn) resumeBtn.disabled = true;
+    var falhas = 0, erro = "";
     try {
         while (all.length < qtd && falhas < 2) {
             var mixed = cfg.tipo === "Misto";
             var originalType = cfg.tipo;
             var n = mixed ? 1 : Math.min(cfg.tipo === "Prática de código (IDE)" ? 2 : 5, qtd - all.length);
             if (mixed) {
-                /* Mix previsível: questões objetivas com enfoques diferentes e desafios reais de IDE. */
                 var mixedPlan = ["Múltipla escolha", "Prática de código (IDE)", "Múltipla escolha", "Prática de código (IDE)", "Múltipla escolha"];
                 cfg.tipo = mixedPlan[all.length % mixedPlan.length];
             }
-            gStatus("⏳ Gerando questões " + (all.length + 1) + " a " + (all.length + n) + " de " + qtd + "...");
-            var lote = await genBatch(cfg, n, all.map(function (q) { return q._raw; }));
+            state.stage = "questions"; state.status = "running"; state.all = all; state.nextQuestion = all.length + 1;
+            saveAiWorkCheckpoint(state);
+            gStatus("⏳ Etapa " + (state.batchesCompleted + 1) + ": gerando questões " + (all.length + 1) + " a " + (all.length + n) + " de " + qtd + "...");
+            var lote = await genBatch(cfg, n, all.map(function (q) { return q._raw || q.p; }));
             cfg.tipo = originalType;
             cfg.provider = GEN_CFG.provider;
             cfg.key = GEN_CFG.apiKey;
@@ -1499,44 +1757,82 @@ async function runGen() {
             if (!lote.length) falhas++;
             else {
                 falhas = 0;
-                all = all.concat(lote);
+                all = all.concat(lote).slice(0, qtd);
+                state.all = all; state.batchesCompleted += 1; state.nextQuestion = all.length + 1;
+                state.lastProvider = GEN_CFG.provider; state.status = "running";
+                saveAiWorkCheckpoint(state);
+                renderAiCheckpointControls();
             }
         }
+        if (all.length < qtd) throw new Error("A geração parou antes de completar todas as questões. O progresso concluído foi salvo; use Retomar trabalho salvo.");
     } catch (err) {
         if (typeof originalType !== "undefined") cfg.tipo = originalType;
         erro = err.message;
+        state.status = "paused"; state.all = all; state.lastError = erro; state.lastProvider = GEN_CFG.provider;
+        saveAiWorkCheckpoint(state);
     }
-    finally { btn.disabled = false; }
+    finally { btn.disabled = false; if (resumeBtn) resumeBtn.disabled = false; }
     if (!all.length) {
+        renderAiCheckpointControls();
         gStatus(erro || "A IA não retornou questões válidas. Tente de novo ou reduza o lote.", true);
         return;
     }
+    if (erro) {
+        renderAiCheckpointControls();
+        gStatus("Trabalho pausado. " + all.length + "/" + qtd + " questões salvas. " + erro, true);
+        return;
+    }
 
-    all = all.slice(0, qtd).map(function (q) { delete q._raw; return q; });
-    var studyCards = [];
-    if (document.getElementById("gStudyCards") && document.getElementById("gStudyCards").checked) {
+    state.stage = "cards"; state.status = "running"; state.all = all; saveAiWorkCheckpoint(state);
+    var studyCards = Array.isArray(state.studyCards) ? state.studyCards : [];
+    if (!studyCards.length && document.getElementById("gStudyCards") && document.getElementById("gStudyCards").checked) {
         try {
-            gStatus("📚 Preparando cards explicativos antes de salvar a aula...");
+            gStatus("📚 Etapa de cards: preparando material explicativo...");
             studyCards = await genStudyCards(cfg);
+            state.studyCards = studyCards; saveAiWorkCheckpoint(state);
         } catch (studyError) {
             appNotice("As questões foram criadas, mas os cards de estudo não puderam ser gerados: " + studyError.message, true);
         }
     }
+
+    var reviewReport = state.reviewReport;
+    if (!reviewReport && AI_ORCHESTRATION.finalReview) {
+        try {
+            state.stage = "final-review"; saveAiWorkCheckpoint(state);
+            gStatus("🔎 Revisão final: um provedor disponível está verificando as questões...");
+            reviewReport = await reviewGeneratedQuestions(all, cfg);
+            state.reviewReport = reviewReport; saveAiWorkCheckpoint(state);
+        } catch (reviewError) {
+            reviewReport = { enabled: true, approved: null, issues: [{ severity: "baixa", reason: "A revisão automática não foi concluída: " + reviewError.message }], reviewer: "indisponível" };
+            state.reviewReport = reviewReport; saveAiWorkCheckpoint(state);
+            appNotice("As questões foram geradas, mas a revisão independente não foi concluída: " + reviewError.message, true);
+        }
+    }
+    all = all.slice(0, qtd).map(function (q) { delete q._raw; return q; });
     var id = "ia_" + Date.now();
     var aula = {
         id: id, t: "🤖 " + cfg.tema + " · " + cfg.dif + " (" + all.length + ")", d: (all.length * 2) + " min",
         h: "Estude os cards explicativos abaixo antes de responder. Tema: " + cfg.tema + ". Dificuldade: " + cfg.dif + ". Tipo: " + cfg.tipo + ".",
         studyCards: studyCards,
+        aiReview: reviewReport || null,
         q: all
     };
     var mod = MODS.find(function (m) { return m.ia; });
     if (!mod) { mod = { t: "🤖 Questões geradas por IA", ia: true, l: [] }; MODS.push(mod); }
-    mod.l.push(aula);
+    var priorAula = mod.l.find(function (existing) { return existing.id === id; });
+    if (!priorAula) mod.l.push(aula);
+    state.stage = "saving"; state.status = "completed"; state.finalAulaId = id; state.all = all; state.reviewReport = reviewReport;
+    saveAiWorkCheckpoint(state);
     var saved = saveAllContent();
+    if (saved) clearAiWorkCheckpoint();
+    else { state.status = "paused"; state.lastError = "Não foi possível persistir o conteúdo no armazenamento local."; saveAiWorkCheckpoint(state); }
     renderMenu();
     if (erro) appNotice("Foram geradas " + all.length + " de " + qtd + " questões; a solicitação foi interrompida: " + erro, true);
     else if (!saved) appNotice("Questões geradas, mas não foi possível salvá-las. Elas estão disponíveis nesta página enquanto ela permanecer aberta.", true);
     else if (all.length < qtd) appNotice("Foram geradas " + all.length + " de " + qtd + " questões válidas. A IA retornou menos questões do que o solicitado.", true);
+    else if (reviewReport && reviewReport.approved === false) appNotice("Geração concluída. A revisão de " + aiProviderLabel(reviewReport.reviewer) + " sinalizou " + reviewReport.issues.length + " ponto(s) para conferência. Consulte a aula.", true);
+    else if (reviewReport && reviewReport.approved === true) appNotice("Geração concluída e revisada por " + aiProviderLabel(reviewReport.reviewer) + (reviewReport.independent ? " (revisão cruzada)." : " (mesmo provedor; não é uma revisão independente)."));
+    renderAiCheckpointControls();
     closeGenModal();
     location.hash = "#" + id;
 }

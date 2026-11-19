@@ -1057,3 +1057,15 @@ label.field-label { display: block; font-size: 13px; color: var(--muted); margin
 .ai-backup-panel #gBackupStatus { overflow-wrap: anywhere; }
 .ai-backup-guide ol { padding-left: 22px; }
 .ai-backup-guide li { margin: 8px 0; line-height: 1.6; }
+
+/* Botão de cancelamento da resposta do Datrics */
+.ai-stop-button { border-color: var(--danger, #ff6a6a) !important; color: var(--danger, #ff6a6a) !important; font-weight: 800; }
+.ai-stop-button[hidden] { display: none !important; }
+
+/* Ferramentas de pesquisa do Datrics */
+.ai-research-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0;font-size:12px;color:var(--muted)}
+.ai-research-tools label{display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.ai-research-tools input[type=checkbox]{accent-color:var(--primary)}
+.ai-research-tools [data-rag-status]{flex:1 1 100%;font-size:11px;overflow-wrap:anywhere}
+.ai-stop-button{background:#b42318!important;border-color:#b42318!important;color:#fff!important;font-weight:800!important}
+.ai-stop-button[hidden]{display:none!important}

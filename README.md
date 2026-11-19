@@ -65,4 +65,30 @@ Atualização: os arquivos-fonte ficam em `src/`; a versão pronta para abrir es
 
 No gerador de IA, use a seção **Backup seguro das APIs**. A exportação criptografa as chaves com AES-256-GCM; a chave de criptografia é derivada da senha escolhida por PBKDF2-SHA-256 (310.000 iterações). A senha nunca é incluída no arquivo. No novo dispositivo, selecione o arquivo `.json` criptografado, informe a senha e importe. O processo exige navegador moderno e contexto seguro (HTTPS ou localhost).
 
-**Cuidados:** mantenha o arquivo e a senha em locais separados; sem a senha não há recuperação. O arquivo de backup não é sincronizado automaticamente. O armazenamento normal das chaves no navegador continua sendo `localStorage`, que não deve ser tratado como cofre seguro. O backup migra credenciais e configurações dos provedores, não o histórico do chat nem o progresso do curso.
+**Cuidados:** mantenha o arquivo e a senha em locais separados; sem a senha não há recuperação. O arquivo de backup não é sincronizado automaticamente. O armazenamento normal das chaves no navegador continua sendo `localStorage`, que não deve ser tratado como cofre seguro. O backup migra credenciais, configurações dos provedores e o checkpoint de uma tarefa em andamento; não migra o histórico completo do chat nem o progresso geral do curso.
+
+
+## 🤝 Orquestração multi-IA e continuidade de tarefas
+
+A geração de questões usa modo automático, revisão final ativada e checkpoint a cada etapa. Quando uma resposta textual atinge o limite de saída, o Datrics tenta continuar com outro provedor conectado, enviando o trecho já produzido e uma instrução explícita para continuar sem repetir. Para JSON de questões, aproveita objetos completos que chegaram antes do corte e a próxima etapa gera somente a quantidade restante, incluindo os enunciados anteriores na lista anti-repetição.
+
+O gerador salva localmente um checkpoint após cada lote, com tema, parâmetros, questões concluídas, etapa, cards e relatório de revisão. Se a página for fechada ou a API falhar, abra **IA → Criar questões** e use **Retomar trabalho salvo**. Por segurança, o checkpoint não contém API Keys; a chave precisa continuar configurada no navegador. O backup criptografado das APIs também leva o checkpoint e as preferências de orquestração, permitindo migrar o trabalho em andamento com as credenciais. O arquivo de backup aceita até 5 MB para acomodar checkpoints maiores.
+
+A revisão final envia as questões a outro provedor conectado quando houver um disponível; se só houver um provedor configurado, ele fará a revisão sem independência entre modelos. O relatório é anexado à aula e apresenta os pontos sinalizados. A revisão é uma checagem automatizada, não uma garantia de correção factual. Os provedores podem ter limites de contexto, cotas e indisponibilidades; a continuidade não é ilimitada e depende de haver outro provedor conectado e funcional.
+
+## 🔎 Web Search e RAG personalizado do Datrics
+
+No chat do Datrics, use **Web Search** para anexar resultados externos à pergunta. A implementação atual consulta o DuckDuckGo Instant Answer e a API de busca da Wikipédia; os links retornados são enviados como contexto para que o modelo possa citá-los. É uma pesquisa leve de apoio, não um mecanismo de busca geral completo. A disponibilidade depende de CORS/rede do navegador.
+
+Use **+ Documentos** para importar arquivos `.txt`, `.md`, `.csv`, `.json`, `.pdf` (com texto selecionável) e `.docx`. O Datrics extrai o texto, divide em trechos com sobreposição e mantém um índice lexical local no `localStorage`. A cada pergunta, recupera os trechos com maior correspondência e os inclui no contexto da IA. Os arquivos não são enviados integralmente: somente os trechos recuperados são enviados ao provedor de IA quando você faz uma pergunta. O índice fica neste navegador; use **Limpar docs** para removê-lo.
+
+**Limitações:** a recuperação atual é lexical (palavras-chave), não usa embeddings/vetores semânticos; PDFs escaneados/imagens exigem OCR e não são extraídos; o índice tem limite de armazenamento do navegador. A pesquisa externa está disponível no chat de estudo, não no gerador de lotes. Para busca web abrangente, produção multiusuário, embeddings e armazenamento persistente compartilhado, será necessário um backend com proxy de busca e banco vetorial. Não importe documentos confidenciais sem avaliar as políticas do provedor de IA configurado.
+
+
+## Roteamento e verificação de disponibilidade das APIs
+
+O roteador agora faz uma chamada de teste curta em paralelo para as chaves configuradas antes de montar a fila de provedores. Resultados positivos ficam em cache por 90 segundos; erros de cota entram em cooldown por 10 minutos e outras falhas por 2 minutos. Provedores indisponíveis são pulados, sem repetir o mesmo provedor na mesma solicitação. A revisão técnica escolhe um provedor elegível diferente do gerador quando existir.
+
+**Limitação importante:** não existe uma API universal para consultar o saldo exato de tokens/créditos de todos os provedores. O teste confirma que a chave/modelo consegue realizar uma chamada real naquele momento; a resposta de uso/cota de cada serviço continua sendo a fonte definitiva. A chamada de teste consome uma quantidade pequena de tokens e é contabilizada no uso quando a API retorna metadados.
+
+O relatório da revisão continua salvo em `aiReview` para auditoria, mas não é exibido dentro da aula/card do aluno.
