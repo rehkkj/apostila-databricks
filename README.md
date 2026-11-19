@@ -53,5 +53,8 @@ apostila-databricks/
 * **HTML5 & CSS3:** Variáveis CSS dinâmicas (`color-mix`, temas claro/escuro), Grid/Flexbox e animações puras em CSS.
 * **JavaScript (ES6+):** Arquitetura modular sem dependência de frameworks externos, manipulação de DOM, `localStorage` e integração via `Fetch API`.
 * **Google Gemini API:** Motor de inteligência artificial para tutoria e geração estruturada de exercícios em JSON.
+<<<<<<< HEAD
 
 Atualização: os arquivos-fonte ficam em `src/`; a versão pronta para abrir está em `dist/`. Para recompilar após alterações, execute `npm install` e `npm run build`.
+=======
+>>>>>>> 5aa37193cbd81469cb216802e8a7e9109f2683f5
